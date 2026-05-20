@@ -1,0 +1,330 @@
+{{/*
+  Licensed to the Apache Software Foundation (ASF) under one
+  or more contributor license agreements.  See the NOTICE file
+  distributed with this work for additional information
+  regarding copyright ownership.  The ASF licenses this file
+  to you under the Apache License, Version 2.0 (the
+  "License"); you may not use this file except in compliance
+  with the License.  You may obtain a copy of the License at
+ 
+   http://www.apache.org/licenses/LICENSE-2.0
+ 
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied.  See the License for the
+  specific language governing permissions and limitations
+  under the License.
+*/}}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "polaris.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "polaris.labels" . | nindent 4 }}
+    {{- if .Values.podLabels }}
+    {{- tpl (toYaml .Values.podLabels) . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  {{- if not (has (quote .Values.revisionHistoryLimit) (list "" (quote ""))) }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "polaris.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- if .Values.podAnnotations }}
+      annotations:
+        {{- tpl (toYaml .Values.podAnnotations) . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "polaris.selectorLabels" . | nindent 8 }}
+        {{- if .Values.podLabels }}
+        {{- tpl (toYaml .Values.podLabels) . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+      {{- range .Values.imagePullSecrets }}
+        - name: {{ . | quote }}
+      {{- end }}
+      {{- end }}
+      serviceAccountName: {{ include "polaris.serviceAccountName" . }}
+      {{- if .Values.podSecurityContext }}
+      securityContext:
+        {{- tpl (toYaml .Values.podSecurityContext) . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.extraInitContainers }}
+      initContainers:
+        {{- tpl (toYaml .Values.extraInitContainers) . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          {{- if .Values.containerSecurityContext }}
+          securityContext:
+            {{- tpl (toYaml .Values.containerSecurityContext) . | nindent 12 }}
+          {{- end }}
+          image: "{{ tpl .Values.image.repository . }}:{{ tpl .Values.image.tag . | default .Chart.Version }}"
+          imagePullPolicy: {{ tpl .Values.image.pullPolicy . }}
+          {{- if or .Values.storage.secret.name .Values.extraEnv .Values.minio.enabled }}
+          env:
+            {{- include "polaris.secretToEnv" (list .Values.storage.secret "awsAccessKeyId" "polaris.storage.aws.access-key") | indent 12 -}}
+            {{- include "polaris.secretToEnv" (list .Values.storage.secret "awsSecretAccessKey" "polaris.storage.aws.secret-key") | indent 12 -}}
+            {{- include "polaris.secretToEnv" (list .Values.storage.secret "gcpToken" "polaris.storage.gcp.token") | indent 12 -}}
+            {{- if .Values.minio.enabled }}
+            {{- $minioEndpoint := .Values.minio.endpoint }}
+            {{- $minioSecretName := "" }}
+            {{- if .Values.minio.existingSecret }}
+            {{- $minioSecretName = tpl .Values.minio.existingSecret . }}
+            {{- else if .Values.minio.createSecret }}
+            {{- $minioSecretName = (.Values.minio.secret.name | default "minio-credentials") }}
+            {{- end }}
+            {{- if $minioSecretName }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minioSecretName }}
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minioSecretName }}
+                  key: secret-access-key
+            {{- else }}
+            - name: AWS_ACCESS_KEY_ID
+              value: {{ .Values.minio.accessKeyId | quote }}
+            - name: AWS_SECRET_ACCESS_KEY
+              value: {{ .Values.minio.secretAccessKey | quote }}
+            {{- end }}
+            - name: AWS_REGION
+              value: {{ .Values.minio.region | quote }}
+            - name: S3_ENDPOINT
+              value: {{ $minioEndpoint | quote }}
+            - name: S3_PATH_STYLE_ACCESS
+              value: "true"
+            - name: AWS_ENDPOINT_URL_S3
+              value: {{ $minioEndpoint | quote }}
+            - name: AWS_ENDPOINT_URL_STS
+              value: {{ $minioEndpoint | quote }}
+            - name: POLARIS_S3_WRITE_DELEGATION_ENABLED
+              value: {{ .Values.minio.sts.enabled | default false | quote }}
+            {{- if .Values.minio.sts.enabled }}
+            - name: POLARIS_S3_STS_TOKEN_DURATION
+              value: {{ .Values.minio.sts.tokenDuration | default 3600 | quote }}
+            {{- end }}
+            - name: ICEBERG_S3_ENDPOINT
+              value: {{ $minioEndpoint | quote }}
+            {{- if $minioSecretName }}
+            - name: ICEBERG_S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minioSecretName }}
+                  key: access-key-id
+            - name: ICEBERG_S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minioSecretName }}
+                  key: secret-access-key
+            {{- else }}
+            - name: ICEBERG_S3_ACCESS_KEY_ID
+              value: {{ .Values.minio.accessKeyId | quote }}
+            - name: ICEBERG_S3_SECRET_ACCESS_KEY
+              value: {{ .Values.minio.secretAccessKey | quote }}
+            {{- end }}
+            - name: ICEBERG_S3_REGION
+              value: {{ .Values.minio.region | quote }}
+            - name: ICEBERG_S3_PATH_STYLE_ACCESS
+              value: "true"
+            - name: QUARKUS_S3_ENDPOINT_OVERRIDE
+              value: {{ $minioEndpoint | quote }}
+            - name: QUARKUS_S3_AWS_REGION
+              value: {{ .Values.minio.region | quote }}
+            {{- if $minioSecretName }}
+            - name: QUARKUS_S3_AWS_CREDENTIALS_STATIC_PROVIDER_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minioSecretName }}
+                  key: access-key-id
+            - name: QUARKUS_S3_AWS_CREDENTIALS_STATIC_PROVIDER_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minioSecretName }}
+                  key: secret-access-key
+            {{- else }}
+            - name: QUARKUS_S3_AWS_CREDENTIALS_STATIC_PROVIDER_ACCESS_KEY_ID
+              value: {{ .Values.minio.accessKeyId | quote }}
+            - name: QUARKUS_S3_AWS_CREDENTIALS_STATIC_PROVIDER_SECRET_ACCESS_KEY
+              value: {{ .Values.minio.secretAccessKey | quote }}
+            {{- end }}
+            - name: QUARKUS_S3_PATH_STYLE_ACCESS
+              value: "true"
+            - name: QUARKUS_S3_ENDPOINT
+              value: {{ $minioEndpoint | quote }}
+            {{- if $minioSecretName }}
+            - name: QUARKUS_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minioSecretName }}
+                  key: access-key-id
+            - name: QUARKUS_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minioSecretName }}
+                  key: secret-access-key
+            {{- else }}
+            - name: QUARKUS_S3_ACCESS_KEY
+              value: {{ .Values.minio.accessKeyId | quote }}
+            - name: QUARKUS_S3_SECRET_KEY
+              value: {{ .Values.minio.secretAccessKey | quote }}
+            {{- end }}
+            - name: CATALOG_WAREHOUSE
+              value: {{ .Values.minio.warehouse | quote }}
+            - name: CATALOG_IO__IMPL
+              value: "org.apache.iceberg.aws.s3.S3FileIO"
+            - name: CATALOG_S3__ENDPOINT
+              value: {{ $minioEndpoint | quote }}
+            {{- if $minioSecretName }}
+            - name: CATALOG_S3__ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minioSecretName }}
+                  key: access-key-id
+            - name: CATALOG_S3__SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minioSecretName }}
+                  key: secret-access-key
+            {{- else }}
+            - name: CATALOG_S3__ACCESS_KEY_ID
+              value: {{ .Values.minio.accessKeyId | quote }}
+            - name: CATALOG_S3__SECRET_ACCESS_KEY
+              value: {{ .Values.minio.secretAccessKey | quote }}
+            {{- end }}
+            - name: CATALOG_S3__REGION
+              value: {{ .Values.minio.region | quote }}
+            - name: CATALOG_S3__PATH_STYLE_ACCESS
+              value: "true"
+            {{- if $minioSecretName }}
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minioSecretName }}
+                  key: access-key-id
+            - name: S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minioSecretName }}
+                  key: secret-access-key
+            {{- else }}
+            - name: S3_ACCESS_KEY_ID
+              value: {{ .Values.minio.accessKeyId | quote }}
+            - name: S3_SECRET_ACCESS_KEY
+              value: {{ .Values.minio.secretAccessKey | quote }}
+            {{- end }}
+            - name: S3_REGION
+              value: {{ .Values.minio.region | quote }}
+            - name: IO__IMPL
+              value: "org.apache.iceberg.aws.s3.S3FileIO"
+            - name: IO__S3__ENDPOINT
+              value: {{ $minioEndpoint | quote }}
+            {{- if $minioSecretName }}
+            - name: IO__S3__ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minioSecretName }}
+                  key: access-key-id
+            - name: IO__S3__SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minioSecretName }}
+                  key: secret-access-key
+            {{- else }}
+            - name: IO__S3__ACCESS_KEY_ID
+              value: {{ .Values.minio.accessKeyId | quote }}
+            - name: IO__S3__SECRET_ACCESS_KEY
+              value: {{ .Values.minio.secretAccessKey | quote }}
+            {{- end }}
+            - name: IO__S3__REGION
+              value: {{ .Values.minio.region | quote }}
+            - name: IO__S3__PATH_STYLE_ACCESS
+              value: "true"
+            {{- end }}
+            {{- if .Values.extraEnv -}}
+            {{- tpl (toYaml .Values.extraEnv) . | nindent 12 -}}
+            {{- end -}}
+          {{- end }}
+          volumeMounts:
+            - name: config-volume
+              mountPath: {{ trimSuffix "/" .Values.image.configDir }}
+              readOnly: true
+            {{- if .Values.logging.file.enabled }}
+            - name: logs-storage
+              mountPath: {{ .Values.logging.file.logsDir }}
+              readOnly: false
+            {{- end }}
+            - name: temp-dir
+              mountPath: /tmp
+              readOnly: false
+            {{- if .Values.extraVolumeMounts }}
+            {{- tpl (toYaml .Values.extraVolumeMounts) . | nindent 12 }}
+            {{- end }}
+          {{- include "polaris.containerPorts" . | trim | nindent 10 }}
+          livenessProbe:
+            httpGet:
+              path: /q/health/live
+              port: {{ get (first .Values.managementService.ports) "name" }}
+              scheme: HTTP
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+            successThreshold: {{ .Values.livenessProbe.successThreshold }}
+            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
+            terminationGracePeriodSeconds: {{ .Values.livenessProbe.terminationGracePeriodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /q/health/ready
+              port: {{ get (first .Values.managementService.ports) "name" }}
+              scheme: HTTP
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+            successThreshold: {{ .Values.readinessProbe.successThreshold }}
+            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
+          {{- if .Values.resources }}
+          resources:
+            {{- tpl (toYaml .Values.resources) . | nindent 12 }}
+          {{- end }}
+      volumes:
+        {{- include "polaris.configVolume" . | nindent 8 }}
+        {{- if .Values.logging.file.enabled }}
+        - name: logs-storage
+          persistentVolumeClaim:
+            claimName: {{ include "polaris.fullnameWithSuffix" (list . "logs") }}
+        {{- end }}
+        - name: temp-dir
+          emptyDir: {}
+        {{- if .Values.extraVolumes }}
+        {{- tpl (toYaml .Values.extraVolumes) . | nindent 8 }}
+        {{- end }}
+      {{- if .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- tpl (toYaml .Values.topologySpreadConstraints) . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- tpl (toYaml .Values.nodeSelector) . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.affinity }}
+      affinity:
+        {{- tpl (toYaml .Values.affinity) . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.tolerations }}
+      tolerations:
+        {{- tpl (toYaml .Values.tolerations) . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,394 @@
+replicaCount: 1
+
+# DataHub listener 포함 커스텀 이미지 (extensions/datahub-listener 가 빌드된 이미지)
+image:
+  repository: skthynix/polaris
+  pullPolicy: IfNotPresent
+  tag: "v1.3.0-integration-datahub"
+  configDir: /deployments/config
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+configMapLabels: {}
+revisionHistoryLimit: ~
+podSecurityContext:
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 10000
+  capabilities:
+    drop: ["ALL"]
+  seccompProfile:
+    type: RuntimeDefault
+
+service:
+  type: ClusterIP
+  ports:
+    - name: polaris-http
+      port: 8181
+      targetPort: 8181
+      nodePort: ~
+      protocol: ~
+  sessionAffinity: ~
+  clusterIP: ~
+  internalTrafficPolicy: ~
+  externalTrafficPolicy: ~
+  trafficDistribution: ~
+  annotations: {}
+
+managementService:
+  type: ClusterIP
+  ports:
+    - name: polaris-mgmt
+      port: 8182
+      targetPort: 8182
+      nodePort: ~
+      protocol: ~
+  clusterIP: None
+  sessionAffinity: ~
+  internalTrafficPolicy: ~
+  externalTrafficPolicy: ~
+  trafficDistribution: ~
+  annotations: {}
+
+resources:
+  requests:
+    memory: "1Gi"
+    cpu: "500m"
+  limits:
+    memory: "2Gi"
+    cpu: "1000m"
+
+# metrics-server가 클러스터에 설치되어 있어야 작동
+# https://polaris.apache.org/in-dev/unreleased/helm-chart/production/#scaling
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# -- Pod을 노드별로 균등 분산 배치
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: polaris
+
+# -- PodDisruptionBudget: 노드 drain 시 최소 가용 Pod 보장
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+  # minAvailable: 1  # maxUnavailable 대신 사용 가능 (둘 중 하나만 설정)
+
+nodeSelector:
+  {}
+tolerations: []
+affinity: {}
+
+# -- Configures the liveness probe for polaris pods.
+livenessProbe:
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  successThreshold: 1
+  failureThreshold: 10
+  timeoutSeconds: 10
+  terminationGracePeriodSeconds: 30
+
+# -- Configures the readiness probe for polaris pods.
+readinessProbe:
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  successThreshold: 1
+  failureThreshold: 10
+  timeoutSeconds: 10
+
+# -- OPA (Open Policy Agent) 인가 설정
+# 참고: https://polaris.apache.org/releases/1.3.0/managing-security/external-pdp/opa/
+# TODO[OPA]: DataHub listener e2e 검증 위해 임시 비활성. 복귀 시 아래 두 가지 동시 필요:
+#   1) enabled: true 로 변경
+#   2) policyUri 의 hostname 을 "opa" -> "benchmarks-opa" 로 수정
+#      (실제 svc 이름은 benchmarks-opa.datahub-hynix.svc.cluster.local:8282)
+opa:
+  enabled: false
+  # -- 인가(Authorization) 설정
+  authorization:
+    # -- 인가 타입: "internal" (Polaris 내장 RBAC) 또는 "opa" (외부 OPA PDP)
+    type: opa
+    policyUri: "http://benchmarks-opa.datahub-hynix.svc.cluster.local:8282/v1/data/polaris/authz"
+    http:
+      timeout: "PT2S"
+      verifySsl: false
+
+# -- Extra environment variables configuration.
+extraEnv:
+  # PostgreSQL connection settings (from Secret)
+  - name: QUARKUS_DATASOURCE_JDBC_URL
+    valueFrom:
+      secretKeyRef:
+        name: polaris-persistence-secret
+        key: jdbcUrl
+  - name: QUARKUS_DATASOURCE_USERNAME
+    valueFrom:
+      secretKeyRef:
+        name: polaris-persistence-secret
+        key: username
+  - name: QUARKUS_DATASOURCE_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: polaris-persistence-secret
+        key: password
+  # Connection Pool 설정
+  - name: QUARKUS_DATASOURCE_JDBC_MIN_SIZE
+    value: "10"
+  - name: QUARKUS_DATASOURCE_JDBC_MAX_SIZE
+    value: "300"
+  - name: QUARKUS_DATASOURCE_JDBC_IDLE_REMOVAL_INTERVAL
+    value: "PT2M"
+  - name: QUARKUS_DATASOURCE_JDBC_MAX_LIFETIME
+    value: "PT30M"
+  # Bootstrap credentials (from Secret) - format: REALM,client_id,client_secret
+  - name: POLARIS_BOOTSTRAP_CREDENTIALS
+    valueFrom:
+      secretKeyRef:
+        name: polaris-persistence-secret
+        key: bootstrapCredentials
+  # JVM 설정 (Generational ZGC: 저지연 GC, Java 21+)
+  # GC_CONTAINER_OPTIONS: 베이스 이미지의 기본 GC(ParallelGC)를 대체
+  # JAVA_TOOL_OPTIONS: 힙 메모리 설정
+  - name: GC_CONTAINER_OPTIONS
+    value: "-XX:+UseZGC -XX:+ZGenerational"
+  - name: JAVA_TOOL_OPTIONS
+    value: >-
+      -XX:MaxRAMPercentage=65.0
+      -XX:InitialRAMPercentage=50.0
+  # -- DataHub listener 설정.
+  # -- ⚠️ ConfigMap (application.properties) 대신 env vars 로 주입해야 함 — SmallRye Config 의
+  # -- quarkus.config.mapping.validate-unknown=true (baked-in default) 가
+  # -- runtimeOnly extension 의 @ConfigMapping 을 file source 검증 단계에서 못 찾아서 거부함.
+  # -- env vars 는 다른 경로로 처리돼 정상 동작. DESIGN.md / image-build.md 참고.
+  - name: POLARIS_EVENT_LISTENER_DATAHUB_GMS_URL
+    value: "http://datahub-datahub-gms.datahub-hynix.svc.cluster.local:8080"
+  - name: POLARIS_EVENT_LISTENER_DATAHUB_PLATFORM_INSTANCE
+    value: "polaris"
+  - name: POLARIS_EVENT_LISTENER_DATAHUB_ENV
+    value: "PROD"
+  - name: POLARIS_EVENT_LISTENER_DATAHUB_SYNCHRONOUS_MODE
+    value: "false"
+  # -- 격리 가드 (DataHubConfiguration @WithDefault 와 동일, 명시적 노출용)
+  - name: POLARIS_EVENT_LISTENER_DATAHUB_CONNECT_TIMEOUT
+    value: "5s"
+  - name: POLARIS_EVENT_LISTENER_DATAHUB_REQUEST_TIMEOUT
+    value: "10s"
+  - name: POLARIS_EVENT_LISTENER_DATAHUB_MAX_INFLIGHT_EMITS
+    value: "1000"
+  - name: POLARIS_EVENT_LISTENER_DATAHUB_TOKEN
+    value: "eyJhbGciOiJIUzI1NiJ9.eyJhY3RvclR5cGUiOiJVU0VSIiwiYWN0b3JJZCI6ImRhdGFodWIiLCJ0eXBlIjoiUEVSU09OQUwiLCJ2ZXJzaW9uIjoiMiIsImp0aSI6IjY5MThjNjY0LTcyZDQtNDMyYS05YzdlLWFjYjAwNjI3Nzc4OSIsInN1YiI6ImRhdGFodWIiLCJleHAiOjE3ODY1MTA1MjEsImlzcyI6ImRhdGFodWItbWV0YWRhdGEtc2VydmljZSJ9.0EU38xIqwk1quL9-BQp6Vx69qrPQX2u5Vrm3KKKmLhc"
+  # -- DataHub 인증 token 이 필요하면 Secret 으로 주입:
+  # - name: POLARIS_EVENT_LISTENER_DATAHUB_TOKEN
+  #   valueFrom:
+  #     secretKeyRef:
+  #       name: polaris-datahub-token
+  #       key: token
+  # -- catalog → DataHub Domain URN 매핑 (dataset 만, 미매칭 시 미부착)
+  # -- catalog 이름은 alphanumeric/dash 권장. `.` 포함 catalog 는 지원 안 함 (SmallRye 키 충돌).
+  # - name: POLARIS_EVENT_LISTENER_DATAHUB_DOMAIN_MAPPING_<CATALOG>
+  #   value: "urn:li:domain:<id>"
+
+extraVolumes: []
+extraVolumeMounts: []
+extraInitContainers: []
+
+# -- Event Listener (감사 로그): 모든 API 작업을 PostgreSQL events 테이블에 기록 (create table)
+# -- https://github.com/apache/polaris/blob/apache-polaris-1.3.0-incubating/runtime/service/src/main/java/org/apache/polaris/service/events/listeners/PolarisPersistenceEventListener.java
+# -- https://github.com/apache/polaris/blob/apache-polaris-1.3.0-incubating/runtime/service/src/main/java/org/apache/polaris/service/events/listeners/PolarisEventListener.java
+eventListener:
+  # 가능한 값: no-op, persistence-in-memory-buffer, aws-cloudwatch, datahub-http
+  # datahub-http 는 polaris-extensions-datahub-listener 가 빌드된 이미지에서만 동작
+  # ⚠️ DataHub 세부 설정 (gms-url, platform-instance 등) 은 extraEnv 의 POLARIS_EVENT_LISTENER_DATAHUB_*
+  #    env vars 로 주입됨 (SmallRye Config 의 validate-unknown 이 file source 의 keys 를 거부하기 때문).
+  type: datahub-http
+  persistenceBuffer:
+    bufferTime: PT5S        # type=persistence-in-memory-buffer 사용 시
+    maxBufferSize: 1000
+
+# -- Tracing configuration.
+tracing:
+  enabled: false
+  endpoint: "http://otlp-collector:4317"
+  sample: "1.0d"
+  attributes:
+    {}
+
+# -- Metrics configuration.
+metrics:
+  enabled: true
+  tags:
+    application: polaris
+
+# -- ServiceMonitor: Prometheus Operator가 메트릭을 수집할 수 있도록 설정
+serviceMonitor:
+  enabled: true
+  interval: "30s"
+  labels:
+    release: prometheus
+  metricRelabelings: []
+
+# -- Logging configuration
+# 참고: https://polaris.apache.org/releases/1.3.0/configuration/
+#      https://quarkus.io/guides/logging
+logging:
+  level: INFO  # 루트 로그 레벨 (QUARKUS_LOG_LEVEL)
+  requestIdHeaderName: Polaris-Request-Id
+  console:
+    enabled: true
+    threshold: DEBUG
+    json: false
+    format: "%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c{2.}] (%t) [%X{requestId}] %s%e%n"
+  file:
+    enabled: false
+    threshold: INFO
+    json: false
+    format: "%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c{2.}] (%t) [%X{requestId}] %s%e%n"
+    logsDir: /deployments/logs
+    fileName: polaris.log
+    rotation:
+      maxFileSize: 10Mi
+      maxBackupIndex: 5
+      fileSuffix: ~  # .yyyy-MM-dd.gz
+    storage:
+      className: standard
+      size: 5Gi
+      selectorLabels: {}
+  # 카테고리별 로그 레벨
+  categories:
+    io.polaris: INFO
+    io.polaris.service: INFO
+    io.polaris.core: INFO
+    org.apache.polaris: INFO
+    org.apache.iceberg.rest: INFO
+    org.apache.hc.client5.http: INFO
+    
+    # Credential Vending / STS 관련 로그
+    #org.apache.polaris.service.storage: DEBUG
+    #org.apache.polaris.core.storage: DEBUG
+    #org.apache.iceberg.aws.s3: DEBUG
+    #software.amazon.awssdk.services.sts: DEBUG
+    #software.amazon.awssdk: DEBUG
+  mdc: {}
+
+# -- Realm context resolver configuration.
+realmContext:
+  type: default
+  requireHeader: true  # 프로덕션 환경에서는 realm 헤더를 필수로 요구
+  realms:
+    - POLARIS
+
+# -- Polaris features configuration.
+features:
+  # SUPPORTED_CATALOG_STORAGE_TYPES:
+  #   - S3
+  #   - GCS
+  #   - AZURE
+  #   - FILE
+  realmOverrides: {}
+  ALLOW_OVERLAPPING_CATALOG_URLS: true
+
+# -- Polaris persistence configuration.
+persistence:
+  type: relational-jdbc
+  relationalJdbc:
+    # -- Set to true to create the persistence secret during helm install
+    createSecret: true
+    secret:
+      name: polaris-persistence-secret
+      username: polaris
+      password: polaris
+      jdbcUrl: jdbc:postgresql://benchmarks-postgresql:5432/polaris
+      # -- Bootstrap credentials format: REALM,client_id,client_secret
+      # -- 프로덕션에서는 'polaris-secret'을 안전한 랜덤 문자열로 변경해야 합니다.
+      bootstrapCredentials: POLARIS,root,polaris-secret
+
+# -- Polaris FileIO configuration.
+fileIo:
+  type: default
+
+storage:
+  secret:
+    name: ~
+
+# -- Polaris authentication configuration.
+# -- type: mixed (내부 토큰 우선, 실패 시 외부 OIDC 폴백)
+# -- https://polaris.apache.org/releases/1.3.0/managing-security/external-idp/
+authentication:
+  type: mixed
+  authenticator:
+    type: default
+  tokenService:
+    type: default
+  tokenBroker:
+    type: rsa-key-pair
+    maxTokenGeneration: PT1H
+    # -- RSA key pair: Helm pre-install hook이 Secret을 자동 생성 (PKCS#8 형식)
+    # -- Secret이 이미 존재하면 재생성하지 않음
+    secret:
+      name: polaris-rsa-key-pair-secret
+      publicKey: public.pem
+      privateKey: private.pem
+
+# -- Polaris CORS configuration.
+cors:
+  allowedOrigins: []
+  allowedMethods: []
+  allowedHeaders: []
+  exposedHeaders: []
+  accessControlMaxAge: ~
+  accessControlAllowCredentials: ~
+
+# -- Polaris rate limiter configuration.
+rateLimiter:
+  type: no-op
+  tokenBucket:
+    type: default
+    requestsPerSecond: 9999
+    window: PT10S
+
+# -- Polaris asynchronous task executor configuration.
+tasks:
+  # -- The maximum number of concurrent tasks that can be executed at the same time. The default is the number of available cores.
+  maxConcurrentTasks: ~  # 100
+  # -- The maximum number of tasks that can be queued up for execution. The default is Integer.MAX_VALUE.
+  maxQueuedTasks: ~  # 1000
+
+minio:
+  enabled: true
+  endpoint: http://benchmarks-minio.datahub-hynix.svc.cluster.local:9000
+  existingSecret: benchmarks-minio-credentials
+  region: us-east-1
+  warehouse: s3://data-catalog-bucket/
+  accessKeyId: minioadmin
+  secretAccessKey: minioadmin
+
+  sts:
+    enabled: false
+    tokenDuration: 3600
+
+# -- Grafana Dashboard: ConfigMap으로 대시보드 자동 프로비저닝
+grafanaDashboard:
+  enabled: true
+  labels:
+    grafana_dashboard: "1"   # Grafana sidecar가 감지하는 라벨
+  annotations: {}

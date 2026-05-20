@@ -1,0 +1,22 @@
+{{/*
+  PodDisruptionBudget for Polaris.
+  노드 drain 시 최소 1개 Pod 가용성 보장.
+*/}}
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "polaris.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "polaris.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- else }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable | default 1 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "polaris.selectorLabels" . | nindent 6 }}
+{{- end }}
