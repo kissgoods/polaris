@@ -20,6 +20,9 @@ package org.apache.polaris.extensions.federation.hive;
 
 import io.smallrye.common.annotation.Identifier;
 import jakarta.enterprise.context.ApplicationScoped;
+import java.io.File;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.hive.HiveCatalog;
 import org.apache.polaris.core.catalog.ExternalCatalogFactory;
@@ -53,22 +56,27 @@ public class HiveFederatedCatalogFactory implements ExternalCatalogFactory {
       throw new IllegalStateException("Hive federation only supports IMPLICIT authentication.");
     }
     String warehouse = ((HiveConnectionConfigInfoDpo) connectionConfigInfoDpo).getWarehouse();
-    // Unlike Hadoop, HiveCatalog does not require us to create a Configuration object, the iceberg
-    // rest library find the default configuration by reading hive-site.xml in the classpath
-    // (including HADOOP_CONF_DIR classpath).
+    // Hadoop's Configuration only loads core-default.xml and core-site.xml from the JVM classpath
+    // (resource lookup, not filesystem). In a Quarkus fast-jar (java -jar quarkus-run.jar),
+    // mounting a config dir or pointing HADOOP_CONF_DIR at a filesystem path is not enough — the
+    // RunnerClassLoader does not pick those files up. So if HADOOP_CONF_DIR is set, explicitly
+    // load every *-site.xml from it as a Configuration resource via Path. This is what Hadoop's
+    // command-line launcher does behind the scenes; we replicate it here.
+    Configuration conf = new Configuration();
+    String hadoopConfDir = System.getenv("HADOOP_CONF_DIR");
+    if (hadoopConfDir != null && !hadoopConfDir.isEmpty()) {
+      File dir = new File(hadoopConfDir);
+      File[] siteXmls = dir.listFiles((d, name) -> name.endsWith("-site.xml"));
+      if (siteXmls != null) {
+        for (File xml : siteXmls) {
+          conf.addResource(new Path(xml.getAbsolutePath()));
+          LOGGER.info("HiveFederatedCatalogFactory: loaded {}", xml.getAbsolutePath());
+        }
+      }
+    }
 
-    // TODO: In the future, we could support multiple HiveCatalog instances based on polaris/catalog
-    // properties.
-    // A brief set of setps involved (and the options):
-    // 1. Create a configuration without default properties.
-    //  `Configuration conf = new Configuration(boolean loadDefaults=false);`
-    // 2a. Specify the hive-site.xml file path in the configuration.
-    //  `conf.addResource(new Path(hiveSiteXmlPath));`
-    // 2b. Specify individual properties in the configuration.
-    //  `conf.set(property, value);`
-    // Polaris could support federating to multiple LDAP based Hive metastores. Multiple
-    // Kerberos instances are not suitable because Kerberos ties a single identity to the server.
     HiveCatalog hiveCatalog = new HiveCatalog();
+    hiveCatalog.setConf(conf);
     hiveCatalog.initialize(
         warehouse, connectionConfigInfoDpo.asIcebergCatalogProperties(polarisCredentialManager));
     return hiveCatalog;

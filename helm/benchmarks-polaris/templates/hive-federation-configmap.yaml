@@ -1,0 +1,35 @@
+{{- if .Values.hiveFederation.enabled }}
+{{- /*
+HMS federation 용 Hadoop 설정. HiveFederatedCatalogFactory 가 HADOOP_CONF_DIR 의
+*-site.xml 을 명시적으로 로드한다 (Quarkus fast-jar 의 RunnerClassLoader 가 파일 경로의
+conf 를 자동으로 잡지 않기 때문). core-site.xml 에는 자격증명을 두지 않는다 — chart 가 이미
+benchmarks-minio-credentials Secret 에서 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 를
+주입하므로 S3AFileSystem 의 EnvironmentVariableCredentialsProvider 가 사용한다.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "polaris.fullname" . }}-hive-conf
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "polaris.labels" . | nindent 4 }}
+data:
+  hive-site.xml: |
+    <?xml version="1.0"?>
+    <configuration>
+      <property><name>hive.metastore.uris</name><value>{{ .Values.hiveFederation.metastoreUri }}</value></property>
+      <property><name>hive.metastore.sasl.enabled</name><value>false</value></property>
+    </configuration>
+  core-site.xml: |
+    <?xml version="1.0"?>
+    <configuration>
+      <property><name>fs.s3a.endpoint</name><value>{{ .Values.hiveFederation.s3.endpoint }}</value></property>
+      <property><name>fs.s3a.path.style.access</name><value>{{ .Values.hiveFederation.s3.pathStyleAccess }}</value></property>
+      <property><name>fs.s3a.connection.ssl.enabled</name><value>false</value></property>
+      {{- /* HMS 가 테이블 위치를 s3:// 스킴으로 등록한 경우에도 S3AFileSystem 으로 처리되도록
+             매핑한다. Hadoop 은 s3:// 에 대해 fs.s3a.* 를 쓰지 않고 기본 fs.s3.impl 도 없어서,
+             이 매핑이 없으면 s3:// 경로의 metadata 로드가 실패한다 (S3AFileSystem 자체는
+             스킴과 무관하게 fs.s3a.* 설정을 읽으므로 위 설정이 그대로 적용됨). */}}
+      <property><name>fs.s3.impl</name><value>org.apache.hadoop.fs.s3a.S3AFileSystem</value></property>
+    </configuration>
+{{- end }}

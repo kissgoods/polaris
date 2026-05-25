@@ -4,7 +4,7 @@ replicaCount: 1
 image:
   repository: skthynix/polaris
   pullPolicy: IfNotPresent
-  tag: "v1.3.0-integration-datahub"
+  tag: "v1.3.0-hive-test-20260521"
   configDir: /deployments/config
 
 imagePullSecrets: []
@@ -207,6 +207,8 @@ extraEnv:
   # -- catalog 이름은 alphanumeric/dash 권장. `.` 포함 catalog 는 지원 안 함 (SmallRye 키 충돌).
   # - name: POLARIS_EVENT_LISTENER_DATAHUB_DOMAIN_MAPPING_<CATALOG>
   #   value: "urn:li:domain:<id>"
+  # -- HMS federation 관련 env (HADOOP_CONF_DIR, readiness, validate-unknown) 는
+  # -- 아래 `hiveFederation` 블록이 켜졌을 때만 deployment 템플릿이 자동 주입함.
 
 extraVolumes: []
 extraVolumeMounts: []
@@ -306,6 +308,28 @@ features:
   #   - FILE
   realmOverrides: {}
   ALLOW_OVERLAPPING_CATALOG_URLS: true
+  # HMS federation 관련 feature 키 (ENABLE_CATALOG_FEDERATION,
+  # SUPPORTED_CATALOG_CONNECTION_TYPES, SUPPORTED_EXTERNAL_CATALOG_AUTHENTICATION_TYPES,
+  # SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION) 은 아래 `hiveFederation` 블록이 켜졌을 때만
+  # configmap 템플릿이 자동으로 추가함 — 여기 직접 넣지 말 것.
+
+# -- HMS (Hive Metastore) federation.
+# -- 켜면 chart 가 (1) polaris-hive-conf ConfigMap 을 생성하고 (2) /etc/polaris/hadoop-conf 에
+# -- 마운트하며 (3) 필요한 feature 키와 env 를 자동 주입한다. 끄면 어떤 리소스도 만들지 않으므로
+# -- HMS 가 없는 환경에서도 helm install 이 깨지지 않는다.
+# -- 전제: image 가 extensions/federation/hive 모듈을 포함해 빌드돼 있어야 함
+# -- (`./gradlew :polaris-server:quarkusBuild -PNonRESTCatalogs=HIVE`).
+hiveFederation:
+  enabled: true
+  # HMS thrift endpoint (in-cluster DNS)
+  metastoreUri: thrift://hms-hms-minio-spark-hive-metastore.datahub-hynix:9083
+  s3:
+    # 페더레이션 대상 테이블의 object storage endpoint (HMS warehouse 가 가리키는 곳)
+    endpoint: http://benchmarks-minio.datahub-hynix:9000
+    pathStyleAccess: true
+    # 자격증명은 별도로 두지 않는다 — chart 가 이미 benchmarks-minio-credentials Secret 에서
+    # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 를 주입하므로 S3AFileSystem 의
+    # EnvironmentVariableCredentialsProvider 가 그대로 사용한다 (core-site.xml 에 secret 미포함).
 
 # -- Polaris persistence configuration.
 persistence:

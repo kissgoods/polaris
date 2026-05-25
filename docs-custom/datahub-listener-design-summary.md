@@ -1,6 +1,6 @@
 # DataHub Event Listener — 요약
 
-상세는 [`DESIGN.md`](./DESIGN.md). 본 문서는 **운영자가 알아야 할 핵심** 만 추렸다.
+상세는 [`DESIGN.md`](datahub-listener-design.md). 본 문서는 **운영자가 알아야 할 핵심** 만 추렸다.
 
 ---
 
