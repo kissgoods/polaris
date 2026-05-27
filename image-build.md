@@ -1,10 +1,12 @@
-# Polaris 1.3.0 + DataHub Listener — Docker 이미지 빌드 & Push
+# Polaris 1.3.0 + Event REST Forwarder — Docker 이미지 빌드 & Push
 
-DataHub event listener 를 포함한 **커스텀 이미지** 를 빌드해서 Docker Hub `skthynix/polaris:datahub-v1.3.0` 으로 push 하는 절차입니다.
+Event REST forwarder (`extensions/event-rest-forwarder/`) 를 포함한 **커스텀 이미지** 를 빌드해서 Docker Hub `skthynix/polaris:v1.3.0-rest-forwarder` 으로 push 하는 절차
 
-> **왜 공식 이미지를 못 쓰나**: `apache/polaris:1.3.0-incubating` 에는 `extensions/datahub-listener/` 의 jar 가 없습니다. Quarkus 가 빌드 타임에 CDI 빈을 인덱싱하므로 이미 빌드된 이미지에 listener jar 만 떨궈도 동작하지 않습니다 → 이미지를 다시 빌드해야 합니다.
+> **왜 공식 이미지를 못 쓰나**: `apache/polaris:1.3.0-incubating` 에는 `extensions/event-rest-forwarder/` 의 jar 가 없습니다. Quarkus 가 빌드 타임에 CDI 빈을 인덱싱하므로 이미 빌드된 이미지에 listener jar 만 떨궈도 동작하지 않습니다 → 이미지를 다시 빌드해야 합니다.
 
-대상 이미지: `skthynix/polaris:v1.3.0-integration-datahub`
+> **이미지 태그가 listener 와 1:1 로 묶입니다**: 이전 `v1.3.0-integration-datahub` 는 옛 `datahub-http` listener 가 들어 있는 이미지였습니다. 새 forwarder 는 `v1.3.0-rest-forwarder` 같은 별도 immutable 태그로 push 해야 합니다 — 같은 태그를 재사용하면 (a) 일부 노드의 IfNotPresent 캐시가 옛 이미지를 그대로 쓰고, (b) 같은 release 안에서 노드별로 다른 listener 코드가 도는 split-brain 이 발생할 수 있습니다.
+
+대상 이미지: `skthynix/polaris:v1.3.0-integration-event-rest`
 
 ---
 
@@ -18,7 +20,7 @@ DataHub event listener 를 포함한 **커스텀 이미지** 를 빌드해서 Do
 | 작업 디렉터리 | `/Users/1113435/ai-data-platform/polaris-1.3` | `pwd` |
 | 브랜치 | `polaris-1.3.0-datahub` | `git branch --show-current` |
 
-> Apple Silicon 머신에서 빌드해도 운영 클러스터(amd64) 에 push 하려면 **`linux/amd64` 멀티플랫폼 빌드** 가 필요합니다. `docker buildx` 가 설치돼 있어야 합니다 (`docker buildx version`).
+> Apple Silicon 머신에서 빌드해도 운영 클러스터(amd64) 에 push 하려면 **`linux/amd64` 멀티플랫폼 빌드** 가 필요합니다. `docker buildx` 가 설치돼 있어야 합니다 (`docker buildx version`)
 
 ---
 
@@ -34,14 +36,14 @@ java -version
 ```
 
 ---
-## 2. DataHub Listener 테스트 (선택, 권장)
+## 2. Event REST Forwarder 테스트 (선택, 권장)
 
-49개 테스트가 통과하는지 먼저 확인합니다.
+47개 테스트가 통과하는지 먼저 확인합니다.
 
 ```bash
-cd /Users/1113435/ai-data-platform/polaris-1.3-github/
-./gradlew :polaris-extensions-datahub-listener:test
-# BUILD SUCCESSFUL — DataHubEventMapperTest 19 + AbstractDataHubEventListenerTest 8 + HttpEmitterTest 22
+cd /Users/1113435/ai-data-platform/polaris-1.3-git/
+./gradlew :polaris-extensions-event-rest-forwarder:test
+# BUILD SUCCESSFUL — EventSerializerTest 15 + AbstractEventForwarderListenerTest 14 + HttpEventPosterTest 18
 ```
 
 ---
@@ -57,12 +59,12 @@ cd /Users/1113435/ai-data-platform/polaris-1.3-github/
 빌드가 끝나면 **listener jar 포함 여부** 를 검증합니다:
 
 ```bash
-ls runtime/server/build/quarkus-app/lib/main/ | grep datahub
+ls runtime/server/build/quarkus-app/lib/main/ | grep forwarder
 # 기대 결과:
-# org.apache.polaris.polaris-extensions-datahub-listener-1.3.0-incubating.jar
+# org.apache.polaris.polaris-extensions-event-rest-forwarder-1.3.0-incubating.jar
 ```
 
-> 위 jar 가 없으면 `runtime/server/build.gradle.kts` 에 `runtimeOnly(project(":polaris-extensions-datahub-listener"))` 가 누락된 것입니다.
+> 위 jar 가 없으면 `runtime/server/build.gradle.kts` 에 `runtimeOnly(project(":polaris-extensions-event-rest-forwarder"))` 가 누락된 것입니다.
 
 ---
 
@@ -70,9 +72,9 @@ ls runtime/server/build/quarkus-app/lib/main/ | grep datahub
 
 `runtime/server/src/main/docker/Dockerfile.jvm` 을 사용합니다. 베이스 이미지는 `registry.access.redhat.com/ubi9/openjdk-21-runtime`.
 
-> ⚠️ **같은 태그로 재빌드 시 캐시 함정**
+> ⚠️ **같은 태그로 재빌드 시 캐시**
 > - `docker buildx --push` 는 멀티아키 매니페스트를 registry 로 push 하지만 **로컬 docker 데몬에는 적재하지 않습니다** (`--load` 와 `--push` 동시 사용 불가).
-> - 그래서 빌드 직후 `docker run skthynix/polaris:datahub-v1.3.0` 을 하면 docker 가 **이전에 캐시된 로컬 이미지** 를 그대로 씁니다 (코드 수정이 반영 안 됨).
+> - 그래서 빌드 직후 `docker run skthynix/polaris:v1.3.0-integration-event-rest` 을 하면 docker 가 **이전에 캐시된 로컬 이미지** 를 그대로 씁니다 (코드 수정이 반영 안 됨).
 > - 더해서 buildx 가 이전 빌드의 레이어 캐시를 재사용해 *변경된 파일* 마저 옛 레이어를 가져올 수 있습니다.
 
 같은 태그로 강제 재빌드할 때는 아래 **§4a "Force clean rebuild"** 스크립트를 쓰세요.
@@ -80,7 +82,7 @@ ls runtime/server/build/quarkus-app/lib/main/ | grep datahub
 ### 4a. Force clean rebuild (같은 태그 재빌드 권장)
 
 ```bash
-TAG=skthynix/polaris:v1.3.2-integration-datahub
+TAG=skthynix/polaris:v1.3.0-integration-event-rest
 
 # 1) 로컬 이미지 + dangling 잔존물 정리
 docker image rm -f $TAG 2>/dev/null || true
@@ -101,7 +103,7 @@ docker buildx build \
   --no-cache \
   --pull \
   -f src/main/docker/Dockerfile.jvm \
-  -t skthynix/polaris:v1.3.2-integration-datahub \
+  -t skthynix/polaris:v1.3.0-integration-event-rest \
   --push \
   .
 cd ../..
@@ -120,11 +122,11 @@ docker pull $TAG
 캐시 함정이 없으니 단순합니다.
 
 ```bash
-cd /Users/1113435/ai-data-platform/polaris-1.3-github/runtime/server
+cd /Users/1113435/ai-data-platform/polaris-1.3-git/runtime/server
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
   -f src/main/docker/Dockerfile.jvm \
-  -t skthynix/polaris:v1.3.2-integration-datahub \
+  -t skthynix/polaris:v1.3.0-integration-event-rest \
   --push \
   .
 ```
@@ -136,15 +138,15 @@ docker buildx build \
 이미지 안에 listener jar 가 실제로 들어있는지 최종 확인합니다.
 
 ```bash
-docker run --rm --entrypoint sh skthynix/polaris:v1.3.2-integration-datahub \
-  -c "ls /deployments/lib/main/ | grep datahub"
-# 기대: org.apache.polaris.polaris-extensions-datahub-listener-1.3.0-incubating.jar
+docker run --rm --entrypoint sh skthynix/polaris:v1.3.0-integration-event-rest \
+  -c "ls /deployments/lib/main/ | grep forwarder"
+# 기대: org.apache.polaris.polaris-extensions-event-rest-forwarder-1.3.0-incubating.jar
 ```
 
 빌드 시각을 빠르게 확인해 *로컬에 옛 이미지가 캐시된 게 아닌지* 검증:
 
 ```bash
-docker image inspect skthynix/polaris:v1.3.2-integration-datahub --format '{{.Created}}'
+docker image inspect skthynix/polaris:v1.3.0-integration-event-rest --format '{{.Created}}'
 # 방금 빌드한 시각이 나와야 함. 옛 시각이면 §4a 의 docker pull 이 안 됐다는 뜻
 ```
 
@@ -154,7 +156,7 @@ docker image inspect skthynix/polaris:v1.3.2-integration-datahub --format '{{.Cr
 docker run --rm -p 8181:8181 -p 8182:8182 \
   -e POLARIS_BOOTSTRAP_CREDENTIALS=POLARIS,root,s3cr3t \
   -e POLARIS_PERSISTENCE_TYPE=in-memory \
-  skthynix/polaris:datahub-v1.3.2
+  skthynix/polaris:v1.3.0-integration-event-rest
 # Ctrl-C 로 종료. "Polaris Server started" 가 보이면 OK
 ```
 
@@ -170,31 +172,42 @@ docker run --rm -p 8181:8181 -p 8182:8182 \
 image:
   repository: skthynix/polaris
   pullPolicy: IfNotPresent
-  tag: "datahub-v1.3.2"
+  tag: "v1.3.0-integration-event-rest"
 ```
 
 배포 (네임스페이스 `datahub-hynix`, release name `benchmarks-polaris`):
 
 ```bash
-cd /Users/1113435/ai-data-platform/polaris-1.3-github
+cd /Users/1113435/ai-data-platform/polaris-1.3-git
 
 # 렌더링만 미리 확인
 helm template benchmarks-polaris helm/benchmarks-polaris/ | less
 
 # 실제 설치 또는 업그레이드 (이미 release 가 있으면 upgrade, 없으면 install)
-helm upgrade --install benchmarks-polaris helm/benchmarks-polaris/ \
-  --namespace datahub-hynix --create-namespace \
-  --atomic --timeout 5m
+helm upgrade benchmarks-polaris ./helm/benchmarks-polaris/ \
+    --namespace datahub-hynix \
+    --kube-context docker-desktop \
+    --set image.tag=v1.3.0-integration-event-rest \
+    --set image.pullPolicy=IfNotPresent \
+    --timeout 5m \
+    --wait
 ```
 
 배포 후 listener 활성화 확인:
 
 ```bash
 kubectl -n datahub-hynix logs deploy/benchmarks-polaris --tail=200 \
-  | grep -iE "Polaris Server started|datahub|event-listener"
-# 기대: "Polaris Server started in X.Xs", datahub env vars 적용 흔적
+  | grep -iE "Polaris Server started|rest-forwarder|event-listener" \
+  -o custom-columns=NAME:.metadata.name,IMAGE-ID:.status.containerStatuses[0].imageID
+# 기대: "Polaris Server started in X.Xs", rest-forwarder env vars 적용 흔적
 ```
 
+rolling 완료 후 새 image 모든 pod 에 반영됐는지 확인
+```bash
+kubectl --context docker-desktop -n datahub-hynix get pods \
+-l app.kubernetes.io/instance=benchmarks-polaris \
+-o custom-columns=NAME:.metadata.name,IMAGE-ID:.status.containerStatuses[0].imageID
+```
 ---
 
 ## 7. 새 태그로 재배포
@@ -202,7 +215,7 @@ kubectl -n datahub-hynix logs deploy/benchmarks-polaris --tail=200 \
 코드 수정 후 새 태그로 갱신할 때의 표준 흐름 (멀티아키):
 
 ```bash
-NEW_TAG=v1.3.2-integration-datahub
+NEW_TAG=v1.3.0-integration-event-rest
 
 # 1) Fast-jar 재빌드
 cd /Users/1113435/ai-data-platform/polaris-1.3-github
@@ -213,7 +226,7 @@ cd runtime/server
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
   -f src/main/docker/Dockerfile.jvm \
-  -t skthynix/polaris:v1.3.1-integration-datahub \
+  -t skthynix/polaris:v1.3.0-integration-event-rest \
   --push \
   .
 cd ../..
@@ -235,9 +248,9 @@ helm upgrade benchmarks-polaris helm/benchmarks-polaris/ \
 | 증상 | 원인 | 해결 |
 |---|---|---|
 | `quarkusBuild` 가 JDK 17 거부 메시지로 실패 | `JAVA_HOME` 이 17 을 가리킴 | 위 1번 단계 재실행 |
-| 빌드 후 `lib/main/` 에 datahub jar 없음 | `runtime/server/build.gradle.kts` 변경 누락 | `runtimeOnly(project(":polaris-extensions-datahub-listener"))` 확인 |
+| 빌드 후 `lib/main/` 에 forwarder jar 없음 | `runtime/server/build.gradle.kts` 변경 누락 | `runtimeOnly(project(":polaris-extensions-event-rest-forwarder"))` 확인 |
 | `buildx: command not found` | docker desktop 의 buildx 비활성 | `docker buildx install` 또는 Docker Desktop 재시작 |
 | **같은 태그로 재빌드했는데 옛 동작 그대로** | `--push` 가 로컬 docker 에 적재 안 함 → `docker run` 이 캐시된 옛 이미지 사용 | §4a force clean rebuild (특히 `docker pull $TAG` 마지막 단계) 실행. `docker image inspect ... --format '{{.Created}}'` 로 시각 확인 |
 | pod 가 `ImagePullBackOff` | private 레지스트리인 경우 imagePullSecrets 없음 | Docker Hub public 이미지면 무관, private 이면 `imagePullSecrets` 설정 |
-| pod 가 `SRCFG00050: polaris.event-listener.datahub.X does not map to any root` 로 CrashLoopBackOff | `runtimeOnly` extension 의 `@ConfigMapping` 이 file source 검증 단계에 등록 안 됨 — `validate-unknown=true` 가 거부. env vars 로는 통과 | helm chart 의 `eventListener.datahub.*` 키를 ConfigMap 에 두지 말고 deployment 의 `extraEnv` 로 `POLARIS_EVENT_LISTENER_DATAHUB_<KEY>` 형태로 주입. `helm/benchmarks-polaris/values.yaml` 의 패턴 참조. `polaris.event-listener.type` 만 ConfigMap 에 두는 건 OK |
-| 부팅 후 DataHub 로 emit 가 안 됨 | `eventListener.type` 이 `datahub-http` 가 아니거나 GMS URL 오타 | ConfigMap + env vars 둘 다 확인: `kubectl -n datahub-hynix get deploy benchmarks-polaris -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="POLARIS_EVENT_LISTENER_DATAHUB_GMS_URL")].value}'` |
+| pod 가 `SRCFG00050: polaris.event-listener.rest-forwarder.X does not map to any root` 로 CrashLoopBackOff | `runtimeOnly` extension 의 `@ConfigMapping` 이 file source 검증 단계에 등록 안 됨 — `validate-unknown=true` 가 거부. env vars 로는 통과 | helm chart 의 `eventListener.rest-forwarder.*` 키를 ConfigMap 에 두지 말고 deployment 의 `extraEnv` 로 `POLARIS_EVENT_LISTENER_REST_FORWARDER_<KEY>` 형태로 주입. `helm/benchmarks-polaris/values.yaml` 의 패턴 참조. `polaris.event-listener.type` 만 ConfigMap 에 두는 건 OK |
+| 부팅 후 receiver 로 emit 가 안 됨 | `eventListener.type` 이 `rest-forwarder` 가 아니거나 endpoint URL 오타 | ConfigMap + env vars 둘 다 확인: `kubectl -n datahub-hynix get deploy benchmarks-polaris -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="POLARIS_EVENT_LISTENER_REST_FORWARDER_ENDPOINT_URL")].value}'` |

@@ -95,6 +95,7 @@ import org.apache.polaris.service.events.IcebergRestCatalogEvents.BeforeUpdateTa
 import org.apache.polaris.service.events.listeners.PolarisEventListener;
 import org.apache.polaris.service.events.listeners.RequiresPostRenameTableMetadata;
 import org.apache.polaris.service.events.listeners.RequiresPostUpdateNamespaceMetadata;
+import org.apache.polaris.service.events.listeners.TransactionalCommitTableDeferred;
 import org.apache.polaris.service.types.CommitTableRequest;
 import org.apache.polaris.service.types.CommitViewRequest;
 import org.apache.polaris.service.types.NotificationRequest;
@@ -609,8 +610,27 @@ public class IcebergRestCatalogEventServiceDelegator
     polarisEventListener.onBeforeCommitTransaction(
         new IcebergRestCatalogEvents.BeforeCommitTransactionEvent(
             catalogName, commitTransactionRequest));
-    Response resp =
-        delegate.commitTransaction(prefix, commitTransactionRequest, realmContext, securityContext);
+    // Listeners that forward per-table commit events downstream cannot ship them eagerly during a
+    // transaction: IcebergCatalogHandler.commitTransaction fires onAfterCommitTable while still
+    // populating a transaction workspace, and the final atomic update may still fail. The opt-in
+    // marker TransactionalCommitTableDeferred lets such listeners buffer commit events and only
+    // release them after this delegator confirms the underlying call succeeded. Listeners without
+    // the marker keep the legacy eager-fire behavior.
+    boolean deferred =
+        polarisEventListener instanceof TransactionalCommitTableDeferred;
+    TransactionalCommitTableDeferred tcd =
+        deferred ? (TransactionalCommitTableDeferred) polarisEventListener : null;
+    if (deferred) tcd.beginTransaction();
+    Response resp;
+    try {
+      resp =
+          delegate.commitTransaction(
+              prefix, commitTransactionRequest, realmContext, securityContext);
+    } catch (RuntimeException e) {
+      if (deferred) tcd.endTransaction(false);
+      throw e;
+    }
+    if (deferred) tcd.endTransaction(true);
     polarisEventListener.onAfterCommitTransaction(
         new IcebergRestCatalogEvents.AfterCommitTransactionEvent(
             catalogName, commitTransactionRequest));

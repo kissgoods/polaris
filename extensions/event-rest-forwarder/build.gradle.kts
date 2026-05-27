@@ -25,6 +25,7 @@ plugins {
 dependencies {
   implementation(project(":polaris-runtime-service"))
   implementation(project(":polaris-api-management-model"))
+  implementation(project(":polaris-core"))
 
   implementation(platform(libs.iceberg.bom))
   implementation("org.apache.iceberg:iceberg-api")
@@ -45,4 +46,5 @@ dependencies {
   testImplementation("org.junit.jupiter:junit-jupiter")
   testImplementation(libs.assertj.core)
   testImplementation(libs.mockito.core)
+  testImplementation(project(":polaris-api-iceberg-service"))
 }
