@@ -71,10 +71,6 @@ quarkus {
         .toMap()
     }
   )
-  // HMS federation (hadoop-aws + AWS SDK v2) brings in ~840MB of jars across ~260 modules.
-  // Jandex indexing during quarkusAppPartsBuild exhausts the default 4G worker heap → OOM.
-  // This setting only takes effect for the Quarkus build worker JVM (not gradle daemon).
-  buildForkOptions { maxHeapSize = "12g" }
 }
 
 tasks.register("run") { dependsOn("quarkusRun") }
