@@ -31,6 +31,24 @@ data:
     {{- end -}}
     {{- end -}}
 
+    {{- /* HMS federation feature 키 — hiveFederation.enabled 일 때만.
+           connection/auth types 는 통째로 덮어쓰지 않고 사용자가 features 블록에 지정한
+           리스트(없으면 Polaris 기본값)에 HIVE / IMPLICIT 만 머지한다 — 그래야 이미
+           HADOOP 같은 다른 connection type 이나 좁힌 auth types 를 쓰는 배포가 깨지지 않는다.
+           SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION 은 여기서 설정하지 않는다 — realm 단위
+           전역 플래그라, 켜면 StorageAccessConfigProvider 가 모든 테이블 로드에서 빈
+           StorageAccessConfig 를 반환해 s3.path-style-access 가 누락되고, MinIO 를 쓰는
+           내부 카탈로그 전체가 virtual-host 주소 → UnknownHostException 으로 깨진다. */ -}}
+    {{- if .Values.hiveFederation.enabled -}}
+    {{- $_ = set $map "polaris.features.\"ENABLE_CATALOG_FEDERATION\"" (toJson true) -}}
+    {{- $connTypes := .Values.features.SUPPORTED_CATALOG_CONNECTION_TYPES | default (list "ICEBERG_REST") -}}
+    {{- if not (has "HIVE" $connTypes) -}}{{- $connTypes = append $connTypes "HIVE" -}}{{- end -}}
+    {{- $_ = set $map "polaris.features.\"SUPPORTED_CATALOG_CONNECTION_TYPES\"" (toJson $connTypes) -}}
+    {{- $authTypes := .Values.features.SUPPORTED_EXTERNAL_CATALOG_AUTHENTICATION_TYPES | default (list "OAUTH" "BEARER" "SIGV4") -}}
+    {{- if not (has "IMPLICIT" $authTypes) -}}{{- $authTypes = append $authTypes "IMPLICIT" -}}{{- end -}}
+    {{- $_ = set $map "polaris.features.\"SUPPORTED_EXTERNAL_CATALOG_AUTHENTICATION_TYPES\"" (toJson $authTypes) -}}
+    {{- end -}}
+
     {{- /* Persistence */ -}}
     {{- $_ = set $map "polaris.persistence.type" .Values.persistence.type -}}
     {{- if and ( eq .Values.persistence.type "eclipse-link" ) .Values.persistence.eclipseLink.secret.name -}}

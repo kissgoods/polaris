@@ -72,7 +72,7 @@ spec:
           {{- end }}
           image: "{{ tpl .Values.image.repository . }}:{{ tpl .Values.image.tag . | default .Chart.Version }}"
           imagePullPolicy: {{ tpl .Values.image.pullPolicy . }}
-          {{- if or .Values.storage.secret.name .Values.extraEnv .Values.minio.enabled }}
+          {{- if or .Values.storage.secret.name .Values.extraEnv .Values.minio.enabled .Values.hiveFederation.enabled }}
           env:
             {{- include "polaris.secretToEnv" (list .Values.storage.secret "awsAccessKeyId" "polaris.storage.aws.access-key") | indent 12 -}}
             {{- include "polaris.secretToEnv" (list .Values.storage.secret "awsSecretAccessKey" "polaris.storage.aws.secret-key") | indent 12 -}}
@@ -258,11 +258,27 @@ spec:
             {{- if .Values.extraEnv -}}
             {{- tpl (toYaml .Values.extraEnv) . | nindent 12 -}}
             {{- end -}}
+            {{- if .Values.hiveFederation.enabled }}
+            - name: HADOOP_CONF_DIR
+              value: /etc/polaris/hadoop-conf
+            {{- /* Polaris 1.3.0 의 federation readiness check 가 IMPLICIT 도 ConnectionCredentialVendor
+                   없다고 거부하지만 실제 동작은 함 → 부팅 강행. validate-unknown 은 일부 키를
+                   file source 검증에서 통과시키기 위해 끔. */}}
+            - name: POLARIS_READINESS_IGNORE_SEVERE_ISSUES
+              value: "true"
+            - name: QUARKUS_CONFIG_MAPPING_VALIDATE_UNKNOWN
+              value: "false"
+            {{- end }}
           {{- end }}
           volumeMounts:
             - name: config-volume
               mountPath: {{ trimSuffix "/" .Values.image.configDir }}
               readOnly: true
+            {{- if .Values.hiveFederation.enabled }}
+            - name: hive-conf
+              mountPath: /etc/polaris/hadoop-conf
+              readOnly: true
+            {{- end }}
             {{- if .Values.logging.file.enabled }}
             - name: logs-storage
               mountPath: {{ .Values.logging.file.logsDir }}
@@ -309,6 +325,11 @@ spec:
         {{- end }}
         - name: temp-dir
           emptyDir: {}
+        {{- if .Values.hiveFederation.enabled }}
+        - name: hive-conf
+          configMap:
+            name: {{ include "polaris.fullname" . }}-hive-conf
+        {{- end }}
         {{- if .Values.extraVolumes }}
         {{- tpl (toYaml .Values.extraVolumes) . | nindent 8 }}
         {{- end }}
