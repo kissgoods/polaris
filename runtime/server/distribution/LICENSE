@@ -1243,6 +1243,22 @@ License: Apache License 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
 
 --------------------------------------------------------------------------------
 
+Group: org.apache.hive Name: hive-classification Version: 3.1.3
+Group: org.apache.hive Name: hive-common Version: 3.1.3
+Group: org.apache.hive Name: hive-metastore Version: 3.1.3
+Group: org.apache.hive Name: hive-serde Version: 3.1.3
+Group: org.apache.hive Name: hive-service-rpc Version: 3.1.3
+Group: org.apache.hive Name: hive-shims Version: 3.1.3
+Group: org.apache.hive Name: hive-standalone-metastore Version: 3.1.3
+Group: org.apache.hive Name: hive-storage-api Version: 2.7.0
+Group: org.apache.hive.shims Name: hive-shims-0.23 Version: 3.1.3
+Group: org.apache.hive.shims Name: hive-shims-common Version: 3.1.3
+Group: org.apache.hive.shims Name: hive-shims-scheduler Version: 3.1.3
+Project URL: https://hive.apache.org/
+License: Apache License 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+
+--------------------------------------------------------------------------------
+
 Group: org.apache.httpcomponents.client5 Name: httpclient5 Version: 5.5.1
 Project URL: https://hc.apache.org/httpcomponents-client-5.4.x/
 License: Apache License 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
@@ -1274,6 +1290,7 @@ Group: org.apache.iceberg Name: iceberg-azure Version: 1.10.0
 Group: org.apache.iceberg Name: iceberg-bundled-guava Version: 1.10.0
 Group: org.apache.iceberg Name: iceberg-common Version: 1.10.0
 Group: org.apache.iceberg Name: iceberg-core Version: 1.10.0
+Group: org.apache.iceberg Name: iceberg-hive-metastore Version: 1.10.0
 Group: org.apache.iceberg Name: iceberg-gcp Version: 1.10.0
 Project URL: https://iceberg.apache.org/
 License: Apache License 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt

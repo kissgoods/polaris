@@ -24,7 +24,7 @@ plugins {
   alias(libs.plugins.quarkus)
   id("org.kordamp.gradle.jandex")
   id("polaris-runtime")
-  // id("polaris-license-report")
+  // id("polaris-license-report")  // disabled: requires LICENSE-BINARY-DIST root file. Run ad-hoc to refresh distribution/THIRD-PARTY-LICENSES.html.
 }
 
 val quarkusRunner by
@@ -44,12 +44,9 @@ dependencies {
   runtimeOnly(project(":polaris-relational-jdbc"))
   runtimeOnly("io.quarkus:quarkus-jdbc-postgresql")
   runtimeOnly(project(":polaris-extensions-federation-hadoop"))
+  runtimeOnly(project(":polaris-extensions-federation-hive"))
   runtimeOnly(project(":polaris-extensions-auth-opa"))
   runtimeOnly(project(":polaris-extensions-event-rest-forwarder"))
-
-  if ((project.findProperty("NonRESTCatalogs") as String?)?.contains("HIVE") == true) {
-    runtimeOnly(project(":polaris-extensions-federation-hive"))
-  }
 
   // enforce the Quarkus _platform_ here, to get a consistent and validated set of dependencies
   implementation(enforcedPlatform(libs.quarkus.bom))

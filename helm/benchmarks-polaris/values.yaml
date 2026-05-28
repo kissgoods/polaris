@@ -4,7 +4,7 @@ replicaCount: 1
 image:
   repository: skthynix/polaris
   pullPolicy: IfNotPresent
-  tag: "v1.3.1-integration-event-rest"
+  tag: "v1.3.0-integration-federation-event-rest"
   configDir: /deployments/config
 
 imagePullSecrets: []
@@ -76,7 +76,7 @@ resources:
 autoscaling:
   enabled: true
   minReplicas: 1
-  maxReplicas: 3
+  maxReplicas: 2
   targetCPUUtilizationPercentage: 80
   targetMemoryUtilizationPercentage: 80
 
