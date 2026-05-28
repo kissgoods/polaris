@@ -2,9 +2,15 @@
 {{- /*
 HMS federation 용 Hadoop 설정. HiveFederatedCatalogFactory 가 HADOOP_CONF_DIR 의
 *-site.xml 을 명시적으로 로드한다 (Quarkus fast-jar 의 RunnerClassLoader 가 파일 경로의
-conf 를 자동으로 잡지 않기 때문). core-site.xml 에는 자격증명을 두지 않는다 — chart 가 이미
-benchmarks-minio-credentials Secret 에서 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 를
-주입하므로 S3AFileSystem 의 EnvironmentVariableCredentialsProvider 가 사용한다.
+conf 를 자동으로 잡지 않기 때문).
+
+자격증명 처리: values.yaml 의 hiveFederation.s3.accessKeyId / secretAccessKey 가 비어있으면
+core-site.xml 에 fs.s3a.access.key / fs.s3a.secret.key 를 *박지 않는다*. 이 경우 chart 의
+minio.enabled 가 주입한 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env 를 S3AFileSystem 의
+EnvironmentVariableCredentialsProvider 가 그대로 사용 (federation 대상 S3 == cluster minio).
+두 값이 채워져 있으면 fs.s3a.access.key / fs.s3a.secret.key 가 박혀 SimpleAWSCredentialsProvider
+경로로 동작 (federation 대상 S3 != cluster minio). ⚠️ ConfigMap 평문 저장이므로 운영 시
+Secret + envFrom + EnvironmentVariableCredentialsProvider 로 분리 운영 권장.
 */ -}}
 apiVersion: v1
 kind: ConfigMap
@@ -26,6 +32,12 @@ data:
       <property><name>fs.s3a.endpoint</name><value>{{ .Values.hiveFederation.s3.endpoint }}</value></property>
       <property><name>fs.s3a.path.style.access</name><value>{{ .Values.hiveFederation.s3.pathStyleAccess }}</value></property>
       <property><name>fs.s3a.connection.ssl.enabled</name><value>false</value></property>
+      {{- if and .Values.hiveFederation.s3.accessKeyId .Values.hiveFederation.s3.secretAccessKey }}
+      {{- /* 인라인 자격증명 — SimpleAWSCredentialsProvider 경로 (federation 대상 S3 가 cluster minio 와 다를 때).
+             ⚠️ ConfigMap 평문 노출이라 운영에선 Secret + envFrom 으로 분리 운영 권장. */}}
+      <property><name>fs.s3a.access.key</name><value>{{ .Values.hiveFederation.s3.accessKeyId }}</value></property>
+      <property><name>fs.s3a.secret.key</name><value>{{ .Values.hiveFederation.s3.secretAccessKey }}</value></property>
+      {{- end }}
       {{- /* HMS 가 테이블 위치를 s3:// 스킴으로 등록한 경우에도 S3AFileSystem 으로 처리되도록
              매핑한다. Hadoop 은 s3:// 에 대해 fs.s3a.* 를 쓰지 않고 기본 fs.s3.impl 도 없어서,
              이 매핑이 없으면 s3:// 경로의 metadata 로드가 실패한다 (S3AFileSystem 자체는

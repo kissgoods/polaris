@@ -200,8 +200,6 @@ extraEnv:
   #       name: polaris-rest-forwarder-token
   #       key: token
   #       optional: true
-  # -- HMS federation 관련 env (HADOOP_CONF_DIR, readiness, validate-unknown) 는
-  # -- 아래 `hiveFederation` 블록이 켜졌을 때만 deployment 템플릿이 자동 주입함.
 
 extraVolumes: []
 extraVolumeMounts: []
@@ -311,19 +309,23 @@ features:
 # -- 켜면 chart 가 (1) polaris-hive-conf ConfigMap 을 생성하고 (2) /etc/polaris/hadoop-conf 에
 # -- 마운트하며 (3) 필요한 feature 키와 env 를 자동 주입한다. 끄면 어떤 리소스도 만들지 않으므로
 # -- HMS 가 없는 환경에서도 helm install 이 깨지지 않는다.
-# -- 전제: image 가 extensions/federation/hive 모듈을 포함해 빌드돼 있어야 함
-# -- (`./gradlew :polaris-server:quarkusBuild -PNonRESTCatalogs=HIVE`).
 hiveFederation:
   enabled: true
   # HMS thrift endpoint (in-cluster DNS)
   metastoreUri: thrift://hms-hms-minio-spark-hive-metastore.datahub-hynix:9083
   s3:
-    # 페더레이션 대상 테이블의 object storage endpoint (HMS warehouse 가 가리키는 곳)
+    # 페더레이션 대상 테이블의 object storage endpoint (HMS warehouse 에서 사용하는 minio)
     endpoint: http://benchmarks-minio.datahub-hynix:9000
     pathStyleAccess: true
-    # 자격증명은 별도로 두지 않는다 — chart 가 이미 benchmarks-minio-credentials Secret 에서
-    # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 를 주입하므로 S3AFileSystem 의
-    # EnvironmentVariableCredentialsProvider 가 그대로 사용한다 (core-site.xml 에 secret 미포함).
+    # -- 자격증명 처리 두 경로:
+    # -- (A) 비워두면: chart 가 minio.enabled 로 주입한 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+    # --     env 를 S3AFileSystem 의 EnvironmentVariableCredentialsProvider 가 사용. federation 대상
+    # --     S3 와 Polaris 내부 catalog S3 가 같은 cluster minio 인 경우.
+    # -- (B) 채우면: 아래 두 값이 hive-federation-configmap 의 core-site.xml 의 fs.s3a.access.key /
+    # --     fs.s3a.secret.key 로 박힘. federation 대상이 *다른* S3 (외부 AWS, 다른 사내 MinIO 등)
+    # --     일 때 사용. ⚠️ ConfigMap 평문 저장이므로 운영 환경에선 Secret + envFrom 패턴 권장.
+    accessKeyId: "minioadmin"
+    secretAccessKey: "minioadmin"
 
 # -- Polaris persistence configuration.
 persistence:

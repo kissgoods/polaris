@@ -261,13 +261,6 @@ spec:
             {{- if .Values.hiveFederation.enabled }}
             - name: HADOOP_CONF_DIR
               value: /etc/polaris/hadoop-conf
-            {{- /* Polaris 1.3.0 의 federation readiness check 가 IMPLICIT 도 ConnectionCredentialVendor
-                   없다고 거부하지만 실제 동작은 함 → 부팅 강행. validate-unknown 은 일부 키를
-                   file source 검증에서 통과시키기 위해 끔. */}}
-            - name: POLARIS_READINESS_IGNORE_SEVERE_ISSUES
-              value: "true"
-            - name: QUARKUS_CONFIG_MAPPING_VALIDATE_UNKNOWN
-              value: "false"
             {{- end }}
           {{- end }}
           volumeMounts:
