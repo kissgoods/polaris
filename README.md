@@ -214,4 +214,3 @@ Apache Polaris&trade; is an effort undergoing incubation at The Apache Software 
  
 <sub>Apache&reg;, Apache Polaris&trade;, Apache Iceberg&trade;, Apache Spark&trade; are either registered trademarks or trademarks of the Apache Software Foundation in the United States and/or other countries.</sub>
 # polaris
-# polaris

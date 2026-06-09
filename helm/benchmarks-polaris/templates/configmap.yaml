@@ -207,9 +207,6 @@ data:
     {{- $_ = set $map "polaris.event-listener.persistence-in-memory-buffer.buffer-time" .Values.eventListener.persistenceBuffer.bufferTime -}}
     {{- $_ = set $map "polaris.event-listener.persistence-in-memory-buffer.max-buffer-size" .Values.eventListener.persistenceBuffer.maxBufferSize -}}
     {{- end -}}
-    {{- /* rest-forwarder: 세부 키 (endpoint-url, token 등) 는 deployment 의 extraEnv 로만 주입
-           (SmallRye Config validate-unknown 회피). type 만 ConfigMap 에 박혀도 충분: env var 가
-           file source 보다 우선순위 높음. */ -}}
     {{- end -}}
 
     {{- /* Advanced Configuration (must be done last since it can override any of the settings above) */ -}}

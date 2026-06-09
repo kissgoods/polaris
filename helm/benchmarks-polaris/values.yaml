@@ -1,10 +1,10 @@
 replicaCount: 1
 
-# Event REST forwarder 포함 커스텀 이미지 (extensions/event-rest-forwarder 가 빌드된 이미지)
+# DataHub listener 포함 커스텀 이미지 (extensions/datahub-listener 가 빌드된 이미지)
 image:
   repository: skthynix/polaris
   pullPolicy: IfNotPresent
-  tag: "v1.3.1-integration-event-rest"
+  tag: "v1.3.2-integration-datahub"
   configDir: /deployments/config
 
 imagePullSecrets: []
@@ -14,8 +14,7 @@ serviceAccount:
   annotations: {}
   name: ""
 
-podAnnotations:
-  deployedAt: "{{ now | unixEpoch }}"  # helm upgrade 시마다 변경 → rolling restart
+podAnnotations: {}
 podLabels: {}
 configMapLabels: {}
 revisionHistoryLimit: ~
@@ -176,30 +175,24 @@ extraEnv:
     value: >-
       -XX:MaxRAMPercentage=65.0
       -XX:InitialRAMPercentage=50.0
-  # -- Event REST forwarder 설정 (eventListener.type=rest-forwarder).
-  # -- ⚠️ ConfigMap (application.properties) 대신 env vars 로 주입해야 함 — SmallRye Config 의
-  # -- quarkus.config.mapping.validate-unknown=true (baked-in default) 가
-  # -- runtimeOnly extension 의 @ConfigMapping 을 file source 검증 단계에서 못 찾아서 거부함.
-  # -- env vars 는 다른 경로로 처리돼 정상 동작.
-  # -- 수신자(receiver) 는 raw EventEnvelope 를 받아 DataHub/Kafka/Atlas 등으로 fan-out 책임을 진다.
-  - name: POLARIS_EVENT_LISTENER_REST_FORWARDER_ENDPOINT_URL
-    value: "http://fast-api-test.datahub-hynix.svc.cluster.local:8080/polaris/events"
-  - name: POLARIS_EVENT_LISTENER_REST_FORWARDER_SYNCHRONOUS_MODE
+  # -- DataHub listener 설정
+  - name: POLARIS_EVENT_LISTENER_DATAHUB_GMS_URL
+    value: "http://datahub-datahub-gms.datahub-hynix.svc.cluster.local:8080"
+  - name: POLARIS_EVENT_LISTENER_DATAHUB_PLATFORM_INSTANCE
+    value: "polaris"
+  - name: POLARIS_EVENT_LISTENER_DATAHUB_ENV
+    value: "PROD"
+  - name: POLARIS_EVENT_LISTENER_DATAHUB_SYNCHRONOUS_MODE
     value: "false"
-  # -- 격리 가드 (RestForwarderConfiguration @WithDefault 와 동일, 명시적 노출용)
-  - name: POLARIS_EVENT_LISTENER_REST_FORWARDER_CONNECT_TIMEOUT
+  # -- 격리 가드 (DataHubConfiguration @WithDefault)
+  - name: POLARIS_EVENT_LISTENER_DATAHUB_CONNECT_TIMEOUT
     value: "5s"
-  - name: POLARIS_EVENT_LISTENER_REST_FORWARDER_REQUEST_TIMEOUT
+  - name: POLARIS_EVENT_LISTENER_DATAHUB_REQUEST_TIMEOUT
     value: "10s"
-  - name: POLARIS_EVENT_LISTENER_REST_FORWARDER_MAX_INFLIGHT_EMITS
+  - name: POLARIS_EVENT_LISTENER_DATAHUB_MAX_INFLIGHT_EMITS
     value: "1000"
-  # -- 수신자 인증 token (선택). 인라인 값 대신 Secret 사용 권장:
-  # - name: POLARIS_EVENT_LISTENER_REST_FORWARDER_TOKEN
-  #   valueFrom:
-  #     secretKeyRef:
-  #       name: polaris-rest-forwarder-token
-  #       key: token
-  #       optional: true
+  - name: POLARIS_EVENT_LISTENER_DATAHUB_TOKEN
+    value: "eyJhbGciOiJIUzI1NiJ9.eyJhY3RvclR5cGUiOiJVU0VSIiwiYWN0b3JJZCI6ImRhdGFodWIiLCJ0eXBlIjoiUEVSU09OQUwiLCJ2ZXJzaW9uIjoiMiIsImp0aSI6IjY5MThjNjY0LTcyZDQtNDMyYS05YzdlLWFjYjAwNjI3Nzc4OSIsInN1YiI6ImRhdGFodWIiLCJleHAiOjE3ODY1MTA1MjEsImlzcyI6ImRhdGFodWItbWV0YWRhdGEtc2VydmljZSJ9.0EU38xIqwk1quL9-BQp6Vx69qrPQX2u5Vrm3KKKmLhc"
 
 extraVolumes: []
 extraVolumeMounts: []
@@ -209,14 +202,12 @@ extraInitContainers: []
 # -- https://github.com/apache/polaris/blob/apache-polaris-1.3.0-incubating/runtime/service/src/main/java/org/apache/polaris/service/events/listeners/PolarisPersistenceEventListener.java
 # -- https://github.com/apache/polaris/blob/apache-polaris-1.3.0-incubating/runtime/service/src/main/java/org/apache/polaris/service/events/listeners/PolarisEventListener.java
 eventListener:
-  # 가능한 값: no-op, persistence-in-memory-buffer, aws-cloudwatch, rest-forwarder
-  # rest-forwarder 는 polaris-extensions-event-rest-forwarder 가 빌드된 이미지에서만 동작.
-  # ⚠️ forwarder 세부 설정 (endpoint-url, token 등) 은 extraEnv 의
-  #    POLARIS_EVENT_LISTENER_REST_FORWARDER_* env vars 로 주입됨 (SmallRye Config 의
-  #    validate-unknown 이 file source 의 keys 를 거부하기 때문).
-  type: rest-forwarder
+  # 가능한 값: no-op, persistence-in-memory-buffer, aws-cloudwatch, datahub-http
+  # datahub-http 는 polaris-extensions-datahub-listener 가 빌드된 이미지에서만 동작
+  # ⚠️ DataHub 세부 설정 (gms-url, platform-instance 등) 은 extraEnv 의 POLARIS_EVENT_LISTENER_DATAHUB_*
+  type: datahub-http
   persistenceBuffer:
-    bufferTime: PT5S        # type=persistence-in-memory-buffer 사용 시
+    bufferTime: PT30S
     maxBufferSize: 1000
 
 # -- Tracing configuration.
@@ -275,13 +266,6 @@ logging:
     org.apache.polaris: INFO
     org.apache.iceberg.rest: INFO
     org.apache.hc.client5.http: INFO
-    
-    # Credential Vending / STS 관련 로그
-    #org.apache.polaris.service.storage: DEBUG
-    #org.apache.polaris.core.storage: DEBUG
-    #org.apache.iceberg.aws.s3: DEBUG
-    #software.amazon.awssdk.services.sts: DEBUG
-    #software.amazon.awssdk: DEBUG
   mdc: {}
 
 # -- Realm context resolver configuration.
