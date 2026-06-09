@@ -622,15 +622,29 @@ public class IcebergRestCatalogEventServiceDelegator
         deferred ? (TransactionalCommitTableDeferred) polarisEventListener : null;
     if (deferred) tcd.beginTransaction();
     Response resp;
+    // committed flips to true only after the delegate returns normally; a finally (not a
+    // catch RuntimeException) guarantees endTransaction runs even when the delegate throws a
+    // non-RuntimeException Throwable (e.g. an Error). Without this, a skipped endTransaction
+    // would leave the listener's per-thread commit buffer populated on the pooled JAX-RS worker,
+    // and the next op on that thread would silently buffer its committed event forever.
+    boolean committed = false;
     try {
       resp =
           delegate.commitTransaction(
               prefix, commitTransactionRequest, realmContext, securityContext);
-    } catch (RuntimeException e) {
-      if (deferred) tcd.endTransaction(false);
-      throw e;
+      committed = true;
+    } finally {
+      if (deferred) {
+        try {
+          tcd.endTransaction(committed);
+        } catch (RuntimeException drainEx) {
+          LOG.warn(
+              "rest-forwarder: endTransaction({}) threw; suppressing to preserve the commit outcome",
+              committed,
+              drainEx);
+        }
+      }
     }
-    if (deferred) tcd.endTransaction(true);
     polarisEventListener.onAfterCommitTransaction(
         new IcebergRestCatalogEvents.AfterCommitTransactionEvent(
             catalogName, commitTransactionRequest));

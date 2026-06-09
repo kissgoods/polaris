@@ -211,14 +211,9 @@ public class HttpEventPoster implements AutoCloseable {
 
   private boolean doPost(
       final EventEnvelope envelope, final boolean enqueueOnFailure, final boolean forceSync) {
-    final String json;
-    try {
-      json = jsonMapper.writeValueAsString(envelope);
-    } catch (Exception e) {
-      LOG.error("Skipping rest-forwarder emit: failed to serialize envelope", e);
-      return false;
-    }
-
+    // Cheap, side-effect-free gates run BEFORE JSON serialization so a sustained outage (circuit
+    // OPEN) or a misconfigured endpoint doesn't pay writeValueAsString on every skipped emit. The
+    // envelope is buffered as-is on the OPEN path and serialized lazily when the replayer retries.
     final String endpointUrl = config.endpointUrl().orElse(null);
     if (endpointUrl == null) {
       LOG.error(
@@ -239,6 +234,18 @@ public class HttpEventPoster implements AutoCloseable {
       return false;
     }
     final boolean isProbe = (entered == CircuitState.HALF_OPEN);
+
+    // Serialize only after the gates passed. tryEnterCircuit may have claimed a HALF_OPEN probe
+    // slot, so a serialization failure here must release it (like the inflight-full path below)
+    // to avoid wedging the circuit in HALF_OPEN.
+    final String json;
+    try {
+      json = jsonMapper.writeValueAsString(envelope);
+    } catch (Exception e) {
+      LOG.error("Skipping rest-forwarder emit: failed to serialize envelope", e);
+      if (isProbe) releaseProbeSlot();
+      return false;
+    }
 
     if (!inflight.tryAcquire()) {
       if (isProbe) releaseProbeSlot();
